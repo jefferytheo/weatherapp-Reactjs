@@ -25,8 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install TypeScript
-        run: npm install typescript @typescript-eslint/parser
+      - name: Install TypeScript and ESLint dependencies
+        run: npm install typescript @typescript-eslint/parser eslint-config-react-app eslint-plugin-import eslint-plugin-jsx-a11y eslint-plugin-react eslint-plugin-react-hooks
 
       - name: Run linter
         run: npm run lint
+
