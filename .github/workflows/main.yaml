@@ -1,0 +1,63 @@
+# Workflow file to build and push to ecr and deploy to ecs
+
+name: Deploy to ECS
+
+on:
+  push:
+    branches:
+      - main
+      - feature/*
+      - release/*
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Build and push Docker image to ECR
+      run: |
+        # Your commands to build and push the Docker image
+        aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+        docker build -t agape-repo:${{ github.sha }} .
+        docker tag agape-repo:${{ github.sha }} ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/agape-repo:${{ github.sha }}
+        docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/agape-repo:${{ github.sha }}
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: [build]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+  
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Create new revision of ECS task definition for Fargate
+      id: create_revision_fargate
+      run: |
+        aws ecs register-task-definition --family agape-taskdefinition --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/agape-role --network-mode awsvpc --requires-compatibilities FARGATE --cpu 1024 --memory 3072 --runtime-platform "{\"cpuArchitecture\":\"X86_64\",\"operatingSystemFamily\":\"LINUX\"}" --container-definitions '[{"name":"agape-containeragape-container","image":"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/agape-repo:${{ github.sha }}","essential":true,"portMappings":[{"containerPort":3011,"hostPort":3011,"protocol":"tcp","appProtocol": "http"}]}]' 
+                
+    - name: Update ECS service for Fargate
+      run: |
+        TASK_DEFINITION_ARN=$(aws ecs describe-task-definition --task-definition agape-taskdefinition --query 'taskDefinition.taskDefinitionArn' --output text)
+        aws ecs update-service --cluster agape_cluster --service agape-service --task-definition $TASK_DEFINITION_ARN
